@@ -3,8 +3,8 @@
 It does two things you only need to do once:
 
 1. Logs in to Garmin Connect (handling MFA), caches the OAuth token, and prints
-   a base64 blob to store as the ``GARMIN_TOKENS`` GitHub secret. CI restores
-   this into ~/.garminconnect so it never needs your password again.
+   a JSON string to store as the ``GARMIN_TOKENS`` GitHub secret. CI loads this
+   token so it never needs your password.
 
 2. Helps you mint a Google **master token** for Keep, to store as the
    ``KEEP_MASTER_TOKEN`` secret.
@@ -45,7 +45,7 @@ def bootstrap_garmin() -> None:
     # garminconnect 0.3.x serialises the whole token set to one string, which
     # login() can load directly — so the GitHub secret is just this string.
     blob = garmin.client.dumps()
-    print("\n=== Copy everything between the markers into the GARMIN_TOKENS secret ===\n")
+    print("\n=== Copy this JSON into the GARMIN_TOKENS secret ===\n")
     print(blob)
     print("=== end ===")
 

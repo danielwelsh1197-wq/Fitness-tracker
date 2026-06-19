@@ -7,8 +7,11 @@ password + MFA is only needed if the refresh token is ever revoked.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import json
 import os
+import tempfile
 from typing import List, Optional
 
 from garminconnect import Garmin
@@ -16,6 +19,33 @@ from garminconnect import Garmin
 
 def _tokenstore() -> str:
     return os.path.expanduser(os.getenv("GARMIN_TOKENSTORE", "~/.garminconnect"))
+
+
+def _token_file_from_secret(tokens: str) -> str:
+    """Validate GARMIN_TOKENS and write it to a temp file for garminconnect."""
+    try:
+        data = json.loads(tokens)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "GARMIN_TOKENS must be the JSON string printed by "
+            "`python -m scraper.bootstrap_login garmin`, for example "
+            "{\"di_token\": \"...\", \"di_refresh_token\": \"...\"}. "
+            "Do not use the di_token:\"...\" di_refresh_token:\"...\" format."
+        ) from exc
+
+    if not data.get("di_token") or not data.get("di_refresh_token"):
+        raise RuntimeError(
+            "GARMIN_TOKENS JSON is missing di_token or di_refresh_token. "
+            "Re-run `python -m scraper.bootstrap_login garmin` and copy the "
+            "full JSON string between the marker lines."
+        )
+
+    fd, path = tempfile.mkstemp(prefix="garmin_tokens_", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as token_file:
+        token_file.write(tokens)
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o600)
+    return path
 
 
 def login() -> Garmin:
@@ -30,10 +60,11 @@ def login() -> Garmin:
     if os.getenv("GITHUB_ACTIONS") and not tokens:
         raise RuntimeError(
             "GARMIN_TOKENS is empty in GitHub Actions. Add or update the "
-            "repository secret with the full token string printed by "
+            "repository secret with the full JSON token string printed by "
             "`python -m scraper.bootstrap_login garmin`."
         )
-    garmin.login(tokens or _tokenstore())
+    tokenstore = _token_file_from_secret(tokens) if tokens else _tokenstore()
+    garmin.login(tokenstore)
     return garmin
 
 
