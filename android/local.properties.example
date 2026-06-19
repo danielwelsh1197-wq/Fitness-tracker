@@ -1,0 +1,6 @@
+# Copy to local.properties (git-ignored). Android Studio fills sdk.dir for you.
+sdk.dir=/Users/YOU/Library/Android/sdk
+
+# Supabase — the anon key is read-only (enforced by RLS), so it's safe to ship.
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_ANON_KEY=your-anon-key

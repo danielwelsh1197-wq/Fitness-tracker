@@ -1,0 +1,7 @@
+# garminconnect 0.3.x uses the native auth engine (client.dump/dumps); requires Python >=3.12
+garminconnect>=0.3.6
+supabase>=2.4.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+# Only needed if you use the Google Keep source instead of the published Sheet:
+gkeepapi>=0.17.0

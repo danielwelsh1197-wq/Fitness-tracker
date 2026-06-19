@@ -1,0 +1,4 @@
+<resources>
+    <!-- Minimal window theme; Jetpack Compose draws the actual UI/colors. -->
+    <style name="Theme.FitnessDashboard" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
