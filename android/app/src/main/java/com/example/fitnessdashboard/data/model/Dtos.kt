@@ -3,10 +3,10 @@ package com.example.fitnessdashboard.data.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** A single Garmin activity row. */
+/** A single activity row (sourced from Strava). */
 @Serializable
 data class ActivityDto(
-    @SerialName("garmin_id") val garminId: Long,
+    @SerialName("activity_id") val activityId: Long,
     val sport: String,
     val name: String? = null,
     @SerialName("start_time") val startTime: String? = null,

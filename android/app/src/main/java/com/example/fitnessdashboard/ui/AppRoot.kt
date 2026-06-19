@@ -2,9 +2,9 @@ package com.example.fitnessdashboard.ui
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Pool
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -19,20 +19,19 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.fitnessdashboard.ui.activities.ActivitiesScreen
+import com.example.fitnessdashboard.ui.activities.ActivityTypeScreen
 import com.example.fitnessdashboard.ui.lifting.LiftingScreen
-import com.example.fitnessdashboard.ui.stats.StatsScreen
 
 private sealed class Dest(val route: String, val label: String, val icon: ImageVector) {
-    data object Activities : Dest("activities", "Activities", Icons.Filled.DirectionsRun)
-    data object Stats : Dest("stats", "Stats", Icons.Filled.BarChart)
+    data object Running : Dest("running", "Running", Icons.Filled.DirectionsRun)
+    data object Swimming : Dest("swimming", "Swimming", Icons.Filled.Pool)
     data object Lifting : Dest("lifting", "Lifting", Icons.Filled.FitnessCenter)
 }
 
 @Composable
 fun AppRoot() {
     val nav = rememberNavController()
-    val destinations = listOf(Dest.Activities, Dest.Stats, Dest.Lifting)
+    val destinations = listOf(Dest.Running, Dest.Swimming, Dest.Lifting)
 
     Scaffold(
         bottomBar = {
@@ -58,11 +57,11 @@ fun AppRoot() {
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = Dest.Activities.route,
+            startDestination = Dest.Running.route,
             modifier = Modifier.padding(padding),
         ) {
-            composable(Dest.Activities.route) { ActivitiesScreen() }
-            composable(Dest.Stats.route) { StatsScreen() }
+            composable(Dest.Running.route) { ActivityTypeScreen(sport = "run", title = "Running") }
+            composable(Dest.Swimming.route) { ActivityTypeScreen(sport = "swim", title = "Swimming") }
             composable(Dest.Lifting.route) { LiftingScreen() }
         }
     }

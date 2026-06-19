@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,9 +24,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -38,8 +34,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.fitnessdashboard.data.FitnessRepository
 import com.example.fitnessdashboard.data.UiState
 import com.example.fitnessdashboard.data.model.ActivityDto
+import com.example.fitnessdashboard.data.model.MonthlyActivity
+import com.example.fitnessdashboard.data.model.YtdActivityStat
+import com.example.fitnessdashboard.ui.components.BarChart
 import com.example.fitnessdashboard.ui.components.CenteredMessage
 import com.example.fitnessdashboard.ui.components.LoadingBox
+import com.example.fitnessdashboard.ui.components.StatCard
 import com.example.fitnessdashboard.ui.components.sportVisual
 import com.example.fitnessdashboard.util.Format
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,9 +47,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class ActivitiesViewModel : ViewModel() {
+data class ActivityTypeData(
+    val activities: List<ActivityDto>,
+    val stats: List<YtdActivityStat>,
+    val monthly: List<MonthlyActivity>,
+)
+
+class ActivityTypeViewModel : ViewModel() {
     private val repo = FitnessRepository()
-    private val _state = MutableStateFlow<UiState<List<ActivityDto>>>(UiState.Loading)
+    private val _state = MutableStateFlow<UiState<ActivityTypeData>>(UiState.Loading)
     val state = _state.asStateFlow()
 
     init { refresh() }
@@ -58,7 +64,13 @@ class ActivitiesViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = UiState.Loading
             _state.value = try {
-                UiState.Success(repo.activities())
+                UiState.Success(
+                    ActivityTypeData(
+                        activities = repo.activities(),
+                        stats = repo.ytdActivityStats(),
+                        monthly = repo.monthlyActivity(),
+                    ),
+                )
             } catch (e: Exception) {
                 UiState.Error(e.message ?: "Unknown error")
             }
@@ -68,15 +80,14 @@ class ActivitiesViewModel : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ActivitiesScreen() {
-    val vm: ActivitiesViewModel = viewModel()
+fun ActivityTypeScreen(sport: String, title: String) {
+    val vm: ActivityTypeViewModel = viewModel(key = "activity-$sport")
     val state by vm.state.collectAsStateWithLifecycle()
-    var filter by rememberSaveable { mutableStateOf("all") }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Activities") },
+                title = { Text(title) },
                 actions = {
                     IconButton(onClick = vm::refresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
@@ -88,42 +99,57 @@ fun ActivitiesScreen() {
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (val s = state) {
                 is UiState.Loading -> LoadingBox()
-                is UiState.Error -> CenteredMessage("Couldn't load activities.\n${s.message}")
-                is UiState.Success -> {
-                    val items = if (filter == "all") s.data else s.data.filter { it.sport == filter }
-                    Column {
-                        FilterRow(filter) { filter = it }
-                        if (items.isEmpty()) {
-                            CenteredMessage("No activities yet.")
-                        } else {
-                            LazyColumn(
-                                contentPadding = PaddingValues(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                items(items, key = { it.garminId }) { ActivityRow(it) }
-                            }
-                        }
-                    }
-                }
+                is UiState.Error -> CenteredMessage("Couldn't load $title.\n${s.message}")
+                is UiState.Success -> ActivityTypeContent(sport, s.data)
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FilterRow(filter: String, onSelect: (String) -> Unit) {
-    val options = listOf("all" to "All", "run" to "Running", "swim" to "Swimming")
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+private fun ActivityTypeContent(sport: String, data: ActivityTypeData) {
+    val stat = data.stats.firstOrNull { it.sport == sport }
+    val monthly = data.monthly.filter { it.sport == sport }.sortedBy { it.month }
+    val activities = data.activities.filter { it.sport == sport }
+
+    LazyColumn(
+        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        options.forEach { (value, label) ->
-            FilterChip(
-                selected = filter == value,
-                onClick = { onSelect(value) },
-                label = { Text(label) },
-            )
+        item { YtdStats(sport, stat) }
+
+        item {
+            Text("Monthly distance", style = MaterialTheme.typography.titleMedium)
+            val bars = monthly.map { Format.monthLabel(it.month) to (it.distanceM / 1000.0).toFloat() }
+            BarChart(bars, Modifier.fillMaxWidth().padding(top = 8.dp))
+        }
+
+        item { Text("Recent sessions", style = MaterialTheme.typography.titleMedium) }
+        if (activities.isEmpty()) {
+            item { Text("No sessions yet.") }
+        } else {
+            items(activities, key = { it.activityId }) { ActivityRow(it) }
+        }
+    }
+}
+
+@Composable
+private fun YtdStats(sport: String, stat: YtdActivityStat?) {
+    val pace = when (sport) {
+        "swim" -> Format.paceSwim(stat?.avgSecPer100m)
+        else -> Format.paceRun(stat?.avgSecPerKm)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Distance (YTD)", Format.distance(stat?.totalDistanceM), Modifier.weight(1f))
+            StatCard("Time (YTD)", Format.duration(stat?.totalDurationS), Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Sessions", (stat?.sessions ?: 0).toString(), Modifier.weight(1f))
+            StatCard("Avg pace", pace, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Longest", Format.distance(stat?.longestDistanceM), Modifier.weight(1f))
         }
     }
 }
