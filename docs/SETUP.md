@@ -1,7 +1,8 @@
 # Setup
 
 Four stages: **Supabase → scraper → GitHub Actions → Android app**. Budget ~1
-hour; the fiddliest part is the Google Keep master token (step 2c).
+hour. Cardio comes from Garmin going forward (step 2a) with a one-time Strava
+export backfill for older runs (step 2e).
 
 ---
 
@@ -34,14 +35,14 @@ python -m unittest scraper.tests.test_parser
 ```
 
 ### 2a. Garmin token (one-time, handles MFA)
+Garmin is the going-forward source for new runs/swims.
 ```bash
 python -m scraper.bootstrap_login garmin
 ```
 Log in when prompted (enter the MFA code if asked). It caches a token under
-`~/.garminconnect` (for local runs) and prints a **JSON token string** between
-marker lines. Copy the JSON itself for the `GARMIN_TOKENS` GitHub secret
-(step 3). It should start with `{` and contain keys like `"di_token"` and
-`"di_refresh_token"`.
+`~/.garminconnect` (for local runs) and prints a **token string** — copy it for
+the `GARMIN_TOKENS` GitHub secret (step 3). `login()` loads that string directly,
+so there's nothing to unpack in CI.
 
 ### 2b. Create your workout sheet
 Make a Google Sheet with a header row. Recommended layout (matches your old Keep
@@ -71,6 +72,22 @@ python -m scraper.main
 Check the Supabase **Table editor**: `activities`, `lift_sessions`, `lift_sets`
 should have rows, and `sync_log` a row with `status = ok`.
 
+### 2e. Backfill old runs from a Strava export (one-time)
+Garmin's sync covers the current period; older runs (and any logged in other apps
+like Nike Run Club) come from Strava's free data export instead.
+1. Request your archive: **Strava → Settings → My Account → Download or Delete
+   Your Account → Request your archive**. You'll get an email with a `.zip` —
+   unzip it (e.g. to `~/Downloads/Strava export 16-6-26`).
+2. Import the run/swim history into Supabase:
+   ```bash
+   python tools/import_strava_export.py "~/Downloads/Strava export 16-6-26"
+   ```
+   It loads every run/swim as `source='strava'` and prints the date Garmin should
+   take over (the day after your last exported run).
+3. Set `SYNC_START_DATE` to that date so Garmin only adds newer runs (no
+   duplicates). It's already wired into the workflow as `2026-06-17` and in
+   `.env.example`; change both if your export ends on a different day.
+
 ---
 
 ## 3. GitHub Actions (scheduled scraping)
@@ -86,8 +103,10 @@ should have rows, and `sync_log` a row with `status = ok`.
 2. In the repo: **Settings → Secrets and variables → Actions → New repository secret**, add:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_KEY`
-   - `GARMIN_TOKENS` (the full JSON token string from 2a, copied without the marker lines)
+   - `GARMIN_TOKENS` (the token string from 2a)
    - `SHEET_CSV_URL` (the published-CSV link from 2c)
+
+   (`SYNC_START_DATE` is set in the workflow file, not a secret.)
 3. Go to the **Actions** tab, enable workflows, open **sync**, and click
    **Run workflow** to test. It then runs every 6 hours automatically. Verify
    via the run logs and a fresh `sync_log` row.
@@ -112,17 +131,13 @@ should have rows, and `sync_log` a row with `status = ok`.
 ## Troubleshooting
 - **App shows "Set SUPABASE_URL…"** — `local.properties` is missing the keys; re-check step 4.2 and re-run.
 - **Empty screens** — run the scraper (step 2d) or the Action (step 3.3) first; confirm rows exist in Supabase.
-- **`GARMIN_TOKENS is empty in GitHub Actions`** — the repository secret is
-  missing, named differently, or was saved with no value. Re-run
-  `python -m scraper.bootstrap_login garmin` if needed, then save the printed
-  token string as a repository secret named exactly `GARMIN_TOKENS`.
-- **`GARMIN_TOKENS must be the JSON string...`** — the secret was saved in the
-  wrong format. Re-run `python -m scraper.bootstrap_login garmin` using this
-  repo's virtualenv and copy the JSON line that starts with `{`, not a
-  `di_token:"..." di_refresh_token:"..."` line.
-- **Garmin login fails in CI even with `GARMIN_TOKENS` set** — the refresh token
-  may have been revoked (password change / long gap). Re-run
-  `python -m scraper.bootstrap_login garmin` and update the `GARMIN_TOKENS`
-  secret.
+- **`GARMIN_TOKENS` empty / Garmin login fails in CI** — the secret is missing or
+  the refresh token was revoked (password change / long gap). Re-run
+  `python -m scraper.bootstrap_login garmin` and update the `GARMIN_TOKENS` secret.
+- **Old runs missing or duplicated** — the Strava-export backfill (2e) and Garmin
+  must not overlap. `SYNC_START_DATE` should be the day after your last exported
+  run; lower it and you may double-count that day, raise it and you may leave a gap.
+- **A recent run is missing** — Garmin only fetches from `SYNC_START_DATE`
+  onward; confirm the activity is in Garmin Connect and dated on/after that date.
 - **GitHub cron didn't fire on time** — GitHub's scheduler can lag under load; it's best-effort. Use **Run workflow** to force a sync.
 - **No lifting data** — confirm the sheet is **published** (not just shared), `SHEET_CSV_URL` ends in `output=csv`, dates are `YYYY-MM-DD`, and `entry` lines match `Exercise NxN @ weight`. Open the URL in a browser; you should see raw CSV.

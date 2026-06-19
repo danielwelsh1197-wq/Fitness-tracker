@@ -6,10 +6,17 @@
 -- Tables
 -- ---------------------------------------------------------------------------
 
-create table if not exists activities (
-    garmin_id        bigint primary key,
+-- Activities come from two sources sharing one table: Garmin (new runs, via the
+-- scraper) and a one-time Strava export backfill (older runs). They're told apart
+-- by the `source` column. Re-running this file recreates the table so column
+-- changes take effect; the lifting tables below use `if not exists`, so your
+-- lifting data is preserved. The drop cascades to the activity views, which are
+-- recreated further down.
+drop table if exists activities cascade;
+create table activities (
+    activity_id      bigint primary key,       -- Garmin or Strava activity id
     sport            text not null,            -- 'run' | 'swim' | 'other'
-    garmin_type      text,                     -- raw Garmin typeKey
+    activity_type    text,                     -- raw type (Garmin typeKey / Strava sport_type)
     name             text,
     start_time       timestamptz,
     distance_m       double precision,
@@ -18,6 +25,7 @@ create table if not exists activities (
     avg_hr           integer,
     calories         double precision,
     elevation_gain_m double precision,
+    source           text not null default 'strava',
     raw              jsonb,
     created_at       timestamptz not null default now()
 );
@@ -52,7 +60,7 @@ create index if not exists lift_sets_exercise_idx on lift_sets (exercise);
 create table if not exists sync_log (
     id          bigint generated always as identity primary key,
     ran_at      timestamptz not null default now(),
-    source      text not null,                -- 'garmin' | 'keep'
+    source      text not null,                -- 'strava' | 'sheet' | 'keep'
     status      text not null,                -- 'ok' | 'error'
     items_added integer not null default 0,
     error       text

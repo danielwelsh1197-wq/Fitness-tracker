@@ -1,1 +1,1 @@
-"""Scraper package: pulls Garmin activities and Google Keep lifting notes into Supabase."""
+"""Scraper package: pulls Garmin activities and a Google Sheet lifting log into Supabase."""

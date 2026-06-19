@@ -19,10 +19,10 @@ def get_client() -> Client:
 
 
 def upsert_activities(client: Client, rows: List[dict]) -> int:
-    """Insert/update activities keyed by ``garmin_id``. Returns rows written."""
+    """Insert/update activities keyed by ``activity_id``. Returns rows written."""
     if not rows:
         return 0
-    client.table("activities").upsert(rows, on_conflict="garmin_id").execute()
+    client.table("activities").upsert(rows, on_conflict="activity_id").execute()
     return len(rows)
 
 

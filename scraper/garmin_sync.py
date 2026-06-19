@@ -1,17 +1,19 @@
 """Pull running & swimming (and other) activities from Garmin Connect.
 
-Uses the ``garminconnect`` library. Authentication relies on a previously
-cached OAuth token (created once by ``bootstrap_login.py``) so this runs
-headless in CI. The token auto-refreshes, so a full re-login with the
-password + MFA is only needed if the refresh token is ever revoked.
+Garmin is the **going-forward** cardio source (new activities). Historical runs
+predating this setup are backfilled once from a Strava export via
+``tools/import_strava_export.py`` — both write to the same ``activities`` table,
+distinguished by the ``source`` column ('garmin' vs 'strava').
+
+Authentication relies on a previously cached OAuth token (created once by
+``bootstrap_login.py``) so this runs headless in CI. The token auto-refreshes, so
+a full re-login with the password + MFA is only needed if the refresh token is
+ever revoked.
 """
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
-import json
 import os
-import tempfile
 from typing import List, Optional
 
 from garminconnect import Garmin
@@ -19,33 +21,6 @@ from garminconnect import Garmin
 
 def _tokenstore() -> str:
     return os.path.expanduser(os.getenv("GARMIN_TOKENSTORE", "~/.garminconnect"))
-
-
-def _token_file_from_secret(tokens: str) -> str:
-    """Validate GARMIN_TOKENS and write it to a temp file for garminconnect."""
-    try:
-        data = json.loads(tokens)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "GARMIN_TOKENS must be the JSON string printed by "
-            "`python -m scraper.bootstrap_login garmin`, for example "
-            "{\"di_token\": \"...\", \"di_refresh_token\": \"...\"}. "
-            "Do not use the di_token:\"...\" di_refresh_token:\"...\" format."
-        ) from exc
-
-    if not data.get("di_token") or not data.get("di_refresh_token"):
-        raise RuntimeError(
-            "GARMIN_TOKENS JSON is missing di_token or di_refresh_token. "
-            "Re-run `python -m scraper.bootstrap_login garmin` and copy the "
-            "full JSON string between the marker lines."
-        )
-
-    fd, path = tempfile.mkstemp(prefix="garmin_tokens_", suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as token_file:
-        token_file.write(tokens)
-    with contextlib.suppress(OSError):
-        os.chmod(path, 0o600)
-    return path
 
 
 def login() -> Garmin:
@@ -56,15 +31,7 @@ def login() -> Garmin:
     ``bootstrap_login.py``.
     """
     garmin = Garmin()
-    tokens = (os.getenv("GARMIN_TOKENS") or "").strip()
-    if os.getenv("GITHUB_ACTIONS") and not tokens:
-        raise RuntimeError(
-            "GARMIN_TOKENS is empty in GitHub Actions. Add or update the "
-            "repository secret with the full JSON token string printed by "
-            "`python -m scraper.bootstrap_login garmin`."
-        )
-    tokenstore = _token_file_from_secret(tokens) if tokens else _tokenstore()
-    garmin.login(tokenstore)
+    garmin.login(os.getenv("GARMIN_TOKENS") or _tokenstore())
     return garmin
 
 
@@ -93,9 +60,9 @@ def _as_int(value) -> Optional[int]:
 def _to_row(activity: dict) -> dict:
     type_key = (activity.get("activityType") or {}).get("typeKey")
     return {
-        "garmin_id": activity["activityId"],
+        "activity_id": activity["activityId"],
         "sport": map_sport(type_key),
-        "garmin_type": type_key,
+        "activity_type": type_key,
         "name": activity.get("activityName"),
         "start_time": _iso(activity.get("startTimeGMT")),
         "distance_m": activity.get("distance"),
@@ -104,6 +71,7 @@ def _to_row(activity: dict) -> dict:
         "avg_hr": _as_int(activity.get("averageHR")),
         "calories": activity.get("calories"),
         "elevation_gain_m": activity.get("elevationGain"),
+        "source": "garmin",
         "raw": activity,
     }
 
@@ -118,7 +86,7 @@ def sync(garmin: Optional[Garmin] = None) -> List[dict]:
     """Return normalised rows for the current year up to today.
 
     Fetching the whole year each run keeps year-to-date stats correct and is
-    idempotent because rows are upserted on ``garmin_id``. Override the start
+    idempotent because rows are upserted on ``activity_id``. Override the start
     with the ``SYNC_START_DATE`` env var (YYYY-MM-DD) if you want more history.
     """
     garmin = garmin or login()
