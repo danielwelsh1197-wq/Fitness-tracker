@@ -38,9 +38,10 @@ python -m unittest scraper.tests.test_parser
 python -m scraper.bootstrap_login garmin
 ```
 Log in when prompted (enter the MFA code if asked). It caches a token under
-`~/.garminconnect` (for local runs) and prints a **token string** — copy it for
-the `GARMIN_TOKENS` GitHub secret (step 3). `login()` loads that string directly,
-so there's nothing to unpack in CI.
+`~/.garminconnect` (for local runs) and prints a **token string** between marker
+lines. Copy the token string itself for the `GARMIN_TOKENS` GitHub secret
+(step 3). `login()` loads that string directly, so there's nothing to unpack in
+CI.
 
 ### 2b. Create your workout sheet
 Make a Google Sheet with a header row. Recommended layout (matches your old Keep
@@ -85,7 +86,7 @@ should have rows, and `sync_log` a row with `status = ok`.
 2. In the repo: **Settings → Secrets and variables → Actions → New repository secret**, add:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_KEY`
-   - `GARMIN_TOKENS` (the token string from 2a)
+   - `GARMIN_TOKENS` (the full token string from 2a, copied without the marker lines)
    - `SHEET_CSV_URL` (the published-CSV link from 2c)
 3. Go to the **Actions** tab, enable workflows, open **sync**, and click
    **Run workflow** to test. It then runs every 6 hours automatically. Verify
@@ -111,6 +112,13 @@ should have rows, and `sync_log` a row with `status = ok`.
 ## Troubleshooting
 - **App shows "Set SUPABASE_URL…"** — `local.properties` is missing the keys; re-check step 4.2 and re-run.
 - **Empty screens** — run the scraper (step 2d) or the Action (step 3.3) first; confirm rows exist in Supabase.
-- **Garmin login fails in CI** — the refresh token was revoked (password change / long gap). Re-run `bootstrap_login garmin` and update the `GARMIN_TOKENS` secret.
+- **`GARMIN_TOKENS is empty in GitHub Actions`** — the repository secret is
+  missing, named differently, or was saved with no value. Re-run
+  `python -m scraper.bootstrap_login garmin` if needed, then save the printed
+  token string as a repository secret named exactly `GARMIN_TOKENS`.
+- **Garmin login fails in CI even with `GARMIN_TOKENS` set** — the refresh token
+  may have been revoked (password change / long gap). Re-run
+  `python -m scraper.bootstrap_login garmin` and update the `GARMIN_TOKENS`
+  secret.
 - **GitHub cron didn't fire on time** — GitHub's scheduler can lag under load; it's best-effort. Use **Run workflow** to force a sync.
 - **No lifting data** — confirm the sheet is **published** (not just shared), `SHEET_CSV_URL` ends in `output=csv`, dates are `YYYY-MM-DD`, and `entry` lines match `Exercise NxN @ weight`. Open the URL in a browser; you should see raw CSV.

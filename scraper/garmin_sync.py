@@ -26,7 +26,14 @@ def login() -> Garmin:
     ``bootstrap_login.py``.
     """
     garmin = Garmin()
-    garmin.login(os.getenv("GARMIN_TOKENS") or _tokenstore())
+    tokens = (os.getenv("GARMIN_TOKENS") or "").strip()
+    if os.getenv("GITHUB_ACTIONS") and not tokens:
+        raise RuntimeError(
+            "GARMIN_TOKENS is empty in GitHub Actions. Add or update the "
+            "repository secret with the full token string printed by "
+            "`python -m scraper.bootstrap_login garmin`."
+        )
+    garmin.login(tokens or _tokenstore())
     return garmin
 
 

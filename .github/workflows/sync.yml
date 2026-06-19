@@ -26,6 +26,30 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
+      - name: Check required secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          required = (
+              "SUPABASE_URL",
+              "SUPABASE_SERVICE_KEY",
+              "GARMIN_TOKENS",
+              "SHEET_CSV_URL",
+          )
+          missing = [name for name in required if not os.getenv(name, "").strip()]
+          for name in required:
+              print(f"{name}: {'set' if name not in missing else 'missing'}")
+          if missing:
+              sys.exit(f"Missing required GitHub Actions secrets: {', '.join(missing)}")
+          PY
+
       - name: Run sync
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
