@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -74,7 +75,7 @@ class LiftingViewModel : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LiftingScreen() {
+fun LiftingScreen(onOpenStats: () -> Unit) {
     val vm: LiftingViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
 
@@ -82,6 +83,11 @@ fun LiftingScreen() {
         topBar = {
             TopAppBar(
                 title = { Text("Lifting") },
+                navigationIcon = {
+                    IconButton(onClick = onOpenStats) {
+                        Icon(Icons.Filled.Insights, contentDescription = "Stats")
+                    }
+                },
                 actions = {
                     IconButton(onClick = vm::refresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh")

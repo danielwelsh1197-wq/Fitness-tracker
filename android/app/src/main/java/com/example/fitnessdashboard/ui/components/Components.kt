@@ -29,6 +29,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.sp
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /** Icon + friendly label for a sport bucket. */
 data class SportVisual(val label: String, val icon: ImageVector)
@@ -95,6 +107,85 @@ fun BarChart(
             }
         }
     }
+}
+
+/** One line for [LineChart]: a label, colour, and (x, y) points. */
+data class LineSeries(val label: String, val color: Color, val points: List<Pair<Float, Float>>)
+
+/**
+ * Lightweight multi-line chart drawn with Canvas (no external dependency).
+ * `xMax` fixes the x-axis (e.g. 366 for day-of-year); y auto-scales to a round max.
+ */
+@Composable
+fun LineChart(
+    series: List<LineSeries>,
+    modifier: Modifier = Modifier,
+    xMax: Float = 366f,
+    xTicks: List<Pair<Float, String>> = emptyList(),
+    height: androidx.compose.ui.unit.Dp = 200.dp,
+) {
+    val points = series.flatMap { it.points }
+    if (points.size < 2) {
+        Text("No data yet", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    val yMax = niceCeil((points.maxOfOrNull { it.second } ?: 1f).coerceAtLeast(1f))
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val labelArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+    val labelPx = with(LocalDensity.current) { 10.sp.toPx() }
+
+    Canvas(modifier.fillMaxWidth().height(height)) {
+        val leftPad = 44f
+        val bottomPad = if (xTicks.isEmpty()) 8f else 26f
+        val topPad = 10f
+        val rightPad = 10f
+        val chartW = size.width - leftPad - rightPad
+        val chartH = size.height - topPad - bottomPad
+        fun px(x: Float) = leftPad + (x / xMax) * chartW
+        fun py(y: Float) = topPad + chartH - (y / yMax) * chartH
+
+        val textPaint = android.graphics.Paint().apply {
+            color = labelArgb
+            textSize = labelPx
+            isAntiAlias = true
+        }
+        val steps = 4
+        for (i in 0..steps) {
+            val v = yMax * i / steps
+            val y = py(v)
+            drawLine(gridColor, Offset(leftPad, y), Offset(size.width - rightPad, y), strokeWidth = 1f)
+            drawContext.canvas.nativeCanvas.drawText(v.roundToInt().toString(), 4f, y + labelPx / 3f, textPaint)
+        }
+        val xPaint = android.graphics.Paint(textPaint).apply {
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        xTicks.forEach { (xv, label) ->
+            drawContext.canvas.nativeCanvas.drawText(label, px(xv), size.height - 6f, xPaint)
+        }
+        series.forEach { s ->
+            val pts = s.points.sortedBy { it.first }
+            if (pts.size < 2) return@forEach
+            val path = Path()
+            pts.forEachIndexed { i, (x, y) ->
+                if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+            }
+            drawPath(path, color = s.color, style = Stroke(width = 5f))
+        }
+    }
+}
+
+/** Round up to a "nice" axis maximum (1/2/5 × 10ⁿ). */
+private fun niceCeil(v: Float): Float {
+    if (v <= 0f) return 1f
+    val mag = 10.0.pow(floor(log10(v.toDouble()))).toFloat()
+    val n = v / mag
+    val nice = when {
+        n <= 1f -> 1f
+        n <= 2f -> 2f
+        n <= 5f -> 5f
+        else -> 10f
+    }
+    return nice * mag
 }
 
 @Composable

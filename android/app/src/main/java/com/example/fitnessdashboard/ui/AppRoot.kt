@@ -21,6 +21,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.fitnessdashboard.ui.activities.ActivityTypeScreen
 import com.example.fitnessdashboard.ui.lifting.LiftingScreen
+import com.example.fitnessdashboard.ui.stats.StatsScreen
 
 private sealed class Dest(val route: String, val label: String, val icon: ImageVector) {
     data object Running : Dest("running", "Running", Icons.Filled.DirectionsRun)
@@ -60,9 +61,15 @@ fun AppRoot() {
             startDestination = Dest.Running.route,
             modifier = Modifier.padding(padding),
         ) {
-            composable(Dest.Running.route) { ActivityTypeScreen(sport = "run", title = "Running") }
-            composable(Dest.Swimming.route) { ActivityTypeScreen(sport = "swim", title = "Swimming") }
-            composable(Dest.Lifting.route) { LiftingScreen() }
+            val openStats = { nav.navigate("stats") }
+            composable(Dest.Running.route) {
+                ActivityTypeScreen(sport = "run", title = "Running", onOpenStats = openStats)
+            }
+            composable(Dest.Swimming.route) {
+                ActivityTypeScreen(sport = "swim", title = "Swimming", onOpenStats = openStats)
+            }
+            composable(Dest.Lifting.route) { LiftingScreen(onOpenStats = openStats) }
+            composable("stats") { StatsScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }
