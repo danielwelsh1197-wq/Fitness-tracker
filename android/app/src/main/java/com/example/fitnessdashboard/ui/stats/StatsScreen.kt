@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -48,7 +47,9 @@ import com.example.fitnessdashboard.ui.components.CenteredMessage
 import com.example.fitnessdashboard.ui.components.LineChart
 import com.example.fitnessdashboard.ui.components.LineSeries
 import com.example.fitnessdashboard.ui.components.LoadingBox
+import com.example.fitnessdashboard.ui.components.RouteHeatmap
 import com.example.fitnessdashboard.ui.components.StatCard
+import com.example.fitnessdashboard.ui.components.decodePolyline
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -63,11 +64,11 @@ import kotlin.math.roundToInt
 // ---------------------------------------------------------------------------
 
 /** A single run reduced to the fields these stats need. */
-private data class Run(val date: LocalDate, val km: Double, val secPerKm: Double?)
+private data class Run(val date: LocalDate, val km: Double, val secPerKm: Double?, val area: String?)
 
 data class YearLine(val year: Int, val totalKm: Double, val points: List<Pair<Float, Float>>)
 
-data class AreaCount(val area: String, val runs: Int)
+data class AreaStat(val area: String, val runs: Int, val totalKm: Double, val paceSecPerKm: Double?)
 
 data class RunningYearStats(
     val years: List<YearLine>,
@@ -78,7 +79,7 @@ data class RunningYearStats(
     val neededKmPerWeek: Double?,
     val weeksRemaining: Int,
     val alreadyMatched: Boolean,
-    val areas: List<AreaCount>,
+    val areas: List<AreaStat>,
 )
 
 /** Pace over time: x is days-since-first-run, y is seconds per km. */
@@ -106,6 +107,7 @@ data class StatsBundle(
     val yearly: RunningYearStats,
     val pace: PaceTrend,
     val consistency: Consistency,
+    val routes: List<List<Pair<Double, Double>>> = emptyList(),
 )
 
 // ---------------------------------------------------------------------------
@@ -121,19 +123,19 @@ fun computeStats(activities: List<ActivityDto>, today: LocalDate = LocalDate.now
             if (km <= 0) return@mapNotNull null
             val sec = a.durationS
             val pace = if (sec != null && sec > 0) sec / km else null
-            Run(date, km, pace)
+            Run(date, km, pace, a.locationName?.takeIf { it.isNotBlank() })
         }
         .sortedBy { it.date }
         .toList()
 
     return StatsBundle(
-        yearly = yearlyStats(runs, activities, today),
+        yearly = yearlyStats(runs, today),
         pace = paceTrend(runs),
         consistency = consistency(runs, today),
     )
 }
 
-private fun yearlyStats(runs: List<Run>, activities: List<ActivityDto>, today: LocalDate): RunningYearStats {
+private fun yearlyStats(runs: List<Run>, today: LocalDate): RunningYearStats {
     val years = runs.groupBy { it.date.year }.toSortedMap().map { (year, yrRuns) ->
         var cum = 0.0
         val points = mutableListOf(0f to 0f)
@@ -152,11 +154,16 @@ private fun yearlyStats(runs: List<Run>, activities: List<ActivityDto>, today: L
     val matched = best != null && remainingKm <= 0
     val needed = if (best == null || matched || weeksRemaining <= 0) null else remainingKm / weeksRemaining
 
-    val areas = activities.asSequence()
-        .filter { it.sport == "run" && !it.locationName.isNullOrBlank() }
-        .groupingBy { it.locationName!! }
-        .eachCount()
-        .map { (area, n) -> AreaCount(area, n) }
+    val areas = runs.asSequence()
+        .filter { it.area != null }
+        .groupBy { it.area!! }
+        .map { (area, rs) ->
+            val km = rs.sumOf { it.km }
+            val paced = rs.filter { it.secPerKm != null }
+            val pace = if (paced.isNotEmpty())
+                paced.sumOf { it.secPerKm!! * it.km } / paced.sumOf { it.km } else null
+            AreaStat(area, rs.size, km, pace)
+        }
         .sortedByDescending { it.runs }
 
     return RunningYearStats(
@@ -252,7 +259,9 @@ class StatsViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = UiState.Loading
             _state.value = try {
-                UiState.Success(computeStats(repo.activities()))
+                val bundle = computeStats(repo.activities())
+                val routes = repo.routes().map { decodePolyline(it.polyline) }
+                UiState.Success(bundle.copy(routes = routes))
             } catch (e: Exception) {
                 UiState.Error(e.message ?: "Unknown error")
             }
@@ -303,6 +312,7 @@ private fun StatsContent(data: StatsBundle) {
         PaceTrendSection(data.pace)
         ConsistencySection(data.consistency)
         if (data.yearly.areas.isNotEmpty()) AreasSection(data.yearly.areas)
+        if (data.routes.isNotEmpty()) RoutesSection(data.routes)
     }
 }
 
@@ -411,13 +421,13 @@ private fun intensity(km: Double, max: Double): Float {
 // --- Section: areas --------------------------------------------------------
 
 @Composable
-private fun AreasSection(areas: List<AreaCount>) {
+private fun AreasSection(areas: List<AreaStat>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionTitle("Where you run", "Runs by neighbourhood")
+        SectionTitle("Where you run", "Runs & average pace by neighbourhood")
         val max = (areas.firstOrNull()?.runs ?: 1).coerceAtLeast(1)
         areas.take(12).forEach { a ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(a.area, Modifier.width(120.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(a.area, Modifier.width(108.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Box(Modifier.weight(1f).height(16.dp).padding(horizontal = 8.dp)) {
                     Box(
                         Modifier
@@ -427,9 +437,24 @@ private fun AreasSection(areas: List<AreaCount>) {
                             .background(MaterialTheme.colorScheme.primary),
                     )
                 }
-                Text(a.runs.toString(), Modifier.width(28.dp), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.End)
+                Column(Modifier.width(72.dp), horizontalAlignment = Alignment.End) {
+                    Text("${a.runs} run${if (a.runs == 1) "" else "s"}", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        a.paceSecPerKm?.let { "${paceLabel(it.toFloat())}/km" } ?: "—",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun RoutesSection(routes: List<List<Pair<Double, Double>>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Your routes", "Every run overlaid — brighter where you go more often")
+        RouteHeatmap(routes)
     }
 }
 

@@ -18,6 +18,12 @@ data class ActivityDto(
     @SerialName("location_name") val locationName: String? = null,
 )
 
+/** A run's encoded GPS route (just the polyline column from activities). */
+@Serializable
+data class RouteDto(
+    val polyline: String,
+)
+
 /** Year-to-date totals for one sport (from v_ytd_activity_stats). */
 @Serializable
 data class YtdActivityStat(

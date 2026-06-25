@@ -8,6 +8,8 @@ class FitnessRepository(private val api: SupabaseApi = ApiClient.api) {
 
     suspend fun activities() = api.activities()
 
+    suspend fun routes() = api.routes()
+
     suspend fun ytdActivityStats() = api.ytdActivityStats()
 
     suspend fun monthlyActivity() = api.monthlyActivity()

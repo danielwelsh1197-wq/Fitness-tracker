@@ -4,6 +4,7 @@ import com.example.fitnessdashboard.data.model.ActivityDto
 import com.example.fitnessdashboard.data.model.ExercisePr
 import com.example.fitnessdashboard.data.model.LiftSessionDto
 import com.example.fitnessdashboard.data.model.MonthlyActivity
+import com.example.fitnessdashboard.data.model.RouteDto
 import com.example.fitnessdashboard.data.model.YtdActivityStat
 import com.example.fitnessdashboard.data.model.YtdLiftStats
 import retrofit2.http.GET
@@ -17,6 +18,13 @@ interface SupabaseApi {
         @Query("select") select: String = "*",
         @Query("order") order: String = "start_time.desc",
     ): List<ActivityDto>
+
+    @GET("activities")
+    suspend fun routes(
+        @Query("select") select: String = "polyline",
+        @Query("sport") sport: String = "eq.run",
+        @Query("polyline") hasPolyline: String = "not.is.null",
+    ): List<RouteDto>
 
     @GET("v_ytd_activity_stats")
     suspend fun ytdActivityStats(
