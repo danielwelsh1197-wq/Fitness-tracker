@@ -114,13 +114,16 @@ data class StatsBundle(
 // Computation (pure; no Android deps)
 // ---------------------------------------------------------------------------
 
+/** Runs shorter than this are GPS glitches / accidental recordings, not real runs. */
+private const val MIN_RUN_KM = 0.5
+
 fun computeStats(activities: List<ActivityDto>, today: LocalDate = LocalDate.now()): StatsBundle {
     val runs = activities.asSequence()
         .filter { it.sport == "run" }
         .mapNotNull { a ->
             val date = a.startTime?.let(::parseDate) ?: return@mapNotNull null
             val km = (a.distanceM ?: return@mapNotNull null) / 1000.0
-            if (km <= 0) return@mapNotNull null
+            if (km < MIN_RUN_KM) return@mapNotNull null
             val sec = a.durationS
             val pace = if (sec != null && sec > 0) sec / km else null
             Run(date, km, pace, a.locationName?.takeIf { it.isNotBlank() })
