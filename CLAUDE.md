@@ -43,12 +43,20 @@ the Supabase service_role key (CI secret only).
   from `db.known_locations` so only new areas hit the network; falls back to Garmin's
   `locationName`).
 - History backfill = `tools/backfill_locations.py` (one-time, local): reads each Strava run's
-  start point from the export's `.fit.gz`/`.gpx` files (needs `pip install fitparse`), geocodes,
-  updates the row. Garmin rows use their own coords. Run with the export dir as the arg.
+  GPS track from the export's `.fit.gz`/`.gpx` files (needs `pip install fitparse`), derives the
+  start point (geocoded) AND an encoded route `polyline`, and updates the row. Garmin rows use
+  their own coords (no polyline). Run with the export dir as the arg; `--all` re-processes.
+
+## Route map
+- `activities.polyline` = downsampled Google-encoded GPS track (`scraper/polyline.py` encodes;
+  `ui/components/RouteHeatmap.kt` decodes). The Stats screen overlays every route at low alpha
+  ("Your routes") — a dependency-free heatmap, **no map basemap** (deliberately, to avoid a
+  Google Maps API key). ~93% of runs have GPS (treadmill runs don't). Going-forward Garmin
+  polylines are NOT fetched yet (would need a per-activity detail call) — follow-up.
 
 ## Local env constraints (this machine)
 - Python: `~/fitness-dashboard/.venv` (system 3.9 is too old; venv built with 3.14).
-  Run tests: `./.venv/bin/python -m unittest scraper.tests.test_parser scraper.tests.test_sheets scraper.tests.test_strava_export scraper.tests.test_geocode`
+  Run tests: `./.venv/bin/python -m unittest scraper.tests.test_parser scraper.tests.test_sheets scraper.tests.test_strava_export scraper.tests.test_geocode scraper.tests.test_polyline`
 - **No JDK / Android SDK here** → the Android app only builds in Android Studio, not from
   this shell. Write Kotlin; the user builds/runs it.
 - **`gh` not installed** → GitHub repo/secret steps are manual via the web UI.

@@ -29,6 +29,7 @@ create table activities (
     location_name    text,                     -- neighbourhood (reverse-geocoded)
     start_lat        double precision,
     start_lng        double precision,
+    polyline         text,                     -- encoded GPS track (Google polyline)
     raw              jsonb,
     created_at       timestamptz not null default now()
 );
