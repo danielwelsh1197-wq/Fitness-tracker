@@ -35,9 +35,20 @@ the Supabase service_role key (CI secret only).
 - `activities` keys on `activity_id` (+ `source`, `activity_type`); both sources share it.
 - There is no live `strava_sync.py` — that approach was removed. Don't reintroduce it.
 
+## Run locations (areas)
+- `activities` has `location_name` (neighbourhood) + `start_lat`/`start_lng`. The app groups
+  runs by `location_name` in the Stats screen ("Where you run").
+- Reverse-geocoding via `scraper/geocode.py` (OSM Nominatim, suburb-level, cached by rounded
+  coord, fallback-safe). Garmin sync geocodes new runs in `main.run_garmin` (seeds the cache
+  from `db.known_locations` so only new areas hit the network; falls back to Garmin's
+  `locationName`).
+- History backfill = `tools/backfill_locations.py` (one-time, local): reads each Strava run's
+  start point from the export's `.fit.gz`/`.gpx` files (needs `pip install fitparse`), geocodes,
+  updates the row. Garmin rows use their own coords. Run with the export dir as the arg.
+
 ## Local env constraints (this machine)
 - Python: `~/fitness-dashboard/.venv` (system 3.9 is too old; venv built with 3.14).
-  Run tests: `./.venv/bin/python -m unittest scraper.tests.test_parser scraper.tests.test_sheets scraper.tests.test_strava_export`
+  Run tests: `./.venv/bin/python -m unittest scraper.tests.test_parser scraper.tests.test_sheets scraper.tests.test_strava_export scraper.tests.test_geocode`
 - **No JDK / Android SDK here** → the Android app only builds in Android Studio, not from
   this shell. Write Kotlin; the user builds/runs it.
 - **`gh` not installed** → GitHub repo/secret steps are manual via the web UI.

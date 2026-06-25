@@ -72,6 +72,11 @@ def _to_row(activity: dict) -> dict:
         "calories": activity.get("calories"),
         "elevation_gain_m": activity.get("elevationGain"),
         "source": "garmin",
+        # Garmin's own coarse label is the fallback; main.py refines this to a
+        # neighbourhood via reverse-geocoding the start coordinate.
+        "location_name": activity.get("locationName"),
+        "start_lat": activity.get("startLatitude"),
+        "start_lng": activity.get("startLongitude"),
         "raw": activity,
     }
 

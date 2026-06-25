@@ -15,6 +15,7 @@ data class ActivityDto(
     @SerialName("avg_speed_mps") val avgSpeedMps: Double? = null,
     @SerialName("avg_hr") val avgHr: Int? = null,
     val calories: Double? = null,
+    @SerialName("location_name") val locationName: String? = null,
 )
 
 /** Year-to-date totals for one sport (from v_ytd_activity_stats). */

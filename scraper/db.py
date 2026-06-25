@@ -26,6 +26,19 @@ def upsert_activities(client: Client, rows: List[dict]) -> int:
     return len(rows)
 
 
+def known_locations(client: Client) -> List[tuple]:
+    """Return (start_lat, start_lng, location_name) for already-located rows.
+
+    Used to seed the geocoder cache so existing areas skip the network.
+    """
+    res = client.table("activities").select("start_lat,start_lng,location_name").execute()
+    return [
+        (r["start_lat"], r["start_lng"], r["location_name"])
+        for r in res.data
+        if r.get("location_name") and r.get("start_lat") is not None
+    ]
+
+
 def upsert_lift_session(
     client: Client,
     session_id: str,

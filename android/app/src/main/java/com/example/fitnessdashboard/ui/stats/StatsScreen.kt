@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,6 +59,9 @@ import kotlin.math.roundToInt
 /** One year's cumulative-distance line: points are (dayOfYear, cumulative km). */
 data class YearLine(val year: Int, val totalKm: Double, val points: List<Pair<Float, Float>>)
 
+/** How many runs started in a given neighbourhood. */
+data class AreaCount(val area: String, val runs: Int)
+
 data class RunningYearStats(
     val years: List<YearLine>,
     val currentYear: Int,
@@ -66,6 +71,7 @@ data class RunningYearStats(
     val neededKmPerWeek: Double?,
     val weeksRemaining: Int,
     val alreadyMatched: Boolean,
+    val areas: List<AreaCount>,
 )
 
 /** Pure computation (no Android deps) so it stays easy to reason about/test. */
@@ -105,6 +111,13 @@ fun computeRunningYearStats(
     val needed =
         if (best == null || matched || weeksRemaining <= 0) null else remainingKm / weeksRemaining
 
+    val areas = activities.asSequence()
+        .filter { it.sport == "run" && !it.locationName.isNullOrBlank() }
+        .groupingBy { it.locationName!! }
+        .eachCount()
+        .map { (area, n) -> AreaCount(area, n) }
+        .sortedByDescending { it.runs }
+
     return RunningYearStats(
         years = years,
         currentYear = currentYear,
@@ -114,6 +127,7 @@ fun computeRunningYearStats(
         neededKmPerWeek = needed,
         weeksRemaining = weeksRemaining.roundToInt(),
         alreadyMatched = matched,
+        areas = areas,
     )
 }
 
@@ -222,6 +236,50 @@ private fun StatsContent(data: RunningYearStats) {
 
         Spacer(Modifier.height(4.dp))
         TargetCard(data)
+
+        if (data.areas.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("Where you run", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Runs by neighbourhood",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            AreaList(data.areas)
+        }
+    }
+}
+
+@Composable
+private fun AreaList(areas: List<AreaCount>) {
+    val max = (areas.firstOrNull()?.runs ?: 1).coerceAtLeast(1)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        areas.take(12).forEach { a ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    a.area,
+                    Modifier.width(120.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Box(Modifier.weight(1f).height(16.dp).padding(horizontal = 8.dp)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction = (a.runs.toFloat() / max).coerceIn(0.04f, 1f))
+                            .height(16.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.primary),
+                    )
+                }
+                Text(
+                    a.runs.toString(),
+                    Modifier.width(28.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
     }
 }
 
