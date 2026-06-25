@@ -109,12 +109,18 @@ fun BarChart(
     }
 }
 
-/** One line for [LineChart]: a label, colour, and (x, y) points. */
-data class LineSeries(val label: String, val color: Color, val points: List<Pair<Float, Float>>)
+/** One line for [LineChart]. Set `asPoints` to draw a scatter instead of a line. */
+data class LineSeries(
+    val label: String,
+    val color: Color,
+    val points: List<Pair<Float, Float>>,
+    val asPoints: Boolean = false,
+)
 
 /**
  * Lightweight multi-line chart drawn with Canvas (no external dependency).
- * `xMax` fixes the x-axis (e.g. 366 for day-of-year); y auto-scales to a round max.
+ * `xMax` fixes the x-axis. The y-axis runs `yMin`..`yMax` (yMax null => a round
+ * max above the data); `yLabel` formats the axis ticks (e.g. m:ss for pace).
  */
 @Composable
 fun LineChart(
@@ -123,26 +129,30 @@ fun LineChart(
     xMax: Float = 366f,
     xTicks: List<Pair<Float, String>> = emptyList(),
     height: androidx.compose.ui.unit.Dp = 200.dp,
+    yMin: Float = 0f,
+    yMax: Float? = null,
+    yLabel: (Float) -> String = { it.roundToInt().toString() },
 ) {
     val points = series.flatMap { it.points }
     if (points.size < 2) {
         Text("No data yet", style = MaterialTheme.typography.bodySmall)
         return
     }
-    val yMax = niceCeil((points.maxOfOrNull { it.second } ?: 1f).coerceAtLeast(1f))
+    val top = (yMax ?: niceCeil(points.maxOf { it.second })).coerceAtLeast(yMin + 1f)
+    val bottom = yMin
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val labelArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
     val labelPx = with(LocalDensity.current) { 10.sp.toPx() }
 
     Canvas(modifier.fillMaxWidth().height(height)) {
-        val leftPad = 44f
+        val leftPad = 48f
         val bottomPad = if (xTicks.isEmpty()) 8f else 26f
         val topPad = 10f
         val rightPad = 10f
         val chartW = size.width - leftPad - rightPad
         val chartH = size.height - topPad - bottomPad
-        fun px(x: Float) = leftPad + (x / xMax) * chartW
-        fun py(y: Float) = topPad + chartH - (y / yMax) * chartH
+        fun px(x: Float) = leftPad + (if (xMax == 0f) 0f else x / xMax) * chartW
+        fun py(y: Float) = topPad + chartH - ((y - bottom) / (top - bottom)) * chartH
 
         val textPaint = android.graphics.Paint().apply {
             color = labelArgb
@@ -151,10 +161,10 @@ fun LineChart(
         }
         val steps = 4
         for (i in 0..steps) {
-            val v = yMax * i / steps
+            val v = bottom + (top - bottom) * i / steps
             val y = py(v)
             drawLine(gridColor, Offset(leftPad, y), Offset(size.width - rightPad, y), strokeWidth = 1f)
-            drawContext.canvas.nativeCanvas.drawText(v.roundToInt().toString(), 4f, y + labelPx / 3f, textPaint)
+            drawContext.canvas.nativeCanvas.drawText(yLabel(v), 4f, y + labelPx / 3f, textPaint)
         }
         val xPaint = android.graphics.Paint(textPaint).apply {
             textAlign = android.graphics.Paint.Align.CENTER
@@ -164,12 +174,15 @@ fun LineChart(
         }
         series.forEach { s ->
             val pts = s.points.sortedBy { it.first }
-            if (pts.size < 2) return@forEach
-            val path = Path()
-            pts.forEachIndexed { i, (x, y) ->
-                if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+            if (s.asPoints) {
+                pts.forEach { (x, y) -> drawCircle(s.color, radius = 3.5f, center = Offset(px(x), py(y))) }
+            } else if (pts.size >= 2) {
+                val path = Path()
+                pts.forEachIndexed { i, (x, y) ->
+                    if (i == 0) path.moveTo(px(x), py(y)) else path.lineTo(px(x), py(y))
+                }
+                drawPath(path, color = s.color, style = Stroke(width = 4f))
             }
-            drawPath(path, color = s.color, style = Stroke(width = 5f))
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.example.fitnessdashboard.ui.stats
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,7 @@ import com.example.fitnessdashboard.ui.components.CenteredMessage
 import com.example.fitnessdashboard.ui.components.LineChart
 import com.example.fitnessdashboard.ui.components.LineSeries
 import com.example.fitnessdashboard.ui.components.LoadingBox
+import com.example.fitnessdashboard.ui.components.StatCard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -56,10 +58,15 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** One year's cumulative-distance line: points are (dayOfYear, cumulative km). */
+// ---------------------------------------------------------------------------
+// Model
+// ---------------------------------------------------------------------------
+
+/** A single run reduced to the fields these stats need. */
+private data class Run(val date: LocalDate, val km: Double, val secPerKm: Double?)
+
 data class YearLine(val year: Int, val totalKm: Double, val points: List<Pair<Float, Float>>)
 
-/** How many runs started in a given neighbourhood. */
 data class AreaCount(val area: String, val runs: Int)
 
 data class RunningYearStats(
@@ -74,42 +81,76 @@ data class RunningYearStats(
     val areas: List<AreaCount>,
 )
 
-/** Pure computation (no Android deps) so it stays easy to reason about/test. */
-fun computeRunningYearStats(
-    activities: List<ActivityDto>,
-    today: LocalDate = LocalDate.now(),
-): RunningYearStats {
-    val runsByYear = activities.asSequence()
+/** Pace over time: x is days-since-first-run, y is seconds per km. */
+data class PaceTrend(
+    val raw: List<Pair<Float, Float>>,
+    val rolling: List<Pair<Float, Float>>,
+    val spanDays: Float,
+    val yearTicks: List<Pair<Float, String>>,
+    val yMin: Float,
+    val yMax: Float,
+)
+
+/** One day in the consistency calendar; null km means "no run". */
+data class DayCell(val date: LocalDate, val km: Double)
+
+data class Consistency(
+    val weeks: List<List<DayCell?>>,   // 7 cells (Mon..Sun) per week column
+    val maxDayKm: Double,
+    val runsLast30: Int,
+    val currentStreakWeeks: Int,
+    val longestStreakWeeks: Int,
+)
+
+data class StatsBundle(
+    val yearly: RunningYearStats,
+    val pace: PaceTrend,
+    val consistency: Consistency,
+)
+
+// ---------------------------------------------------------------------------
+// Computation (pure; no Android deps)
+// ---------------------------------------------------------------------------
+
+fun computeStats(activities: List<ActivityDto>, today: LocalDate = LocalDate.now()): StatsBundle {
+    val runs = activities.asSequence()
         .filter { it.sport == "run" }
         .mapNotNull { a ->
             val date = a.startTime?.let(::parseDate) ?: return@mapNotNull null
             val km = (a.distanceM ?: return@mapNotNull null) / 1000.0
-            date to km
+            if (km <= 0) return@mapNotNull null
+            val sec = a.durationS
+            val pace = if (sec != null && sec > 0) sec / km else null
+            Run(date, km, pace)
         }
-        .groupBy({ it.first.year }, { it.first to it.second })
+        .sortedBy { it.date }
+        .toList()
 
-    val years = runsByYear.toSortedMap().map { (year, runs) ->
+    return StatsBundle(
+        yearly = yearlyStats(runs, activities, today),
+        pace = paceTrend(runs),
+        consistency = consistency(runs, today),
+    )
+}
+
+private fun yearlyStats(runs: List<Run>, activities: List<ActivityDto>, today: LocalDate): RunningYearStats {
+    val years = runs.groupBy { it.date.year }.toSortedMap().map { (year, yrRuns) ->
         var cum = 0.0
-        val points = mutableListOf(0f to 0f)   // anchor every line at the origin
-        runs.sortedBy { it.first }.forEach { (date, km) ->
-            cum += km
-            points += date.dayOfYear.toFloat() to cum.toFloat()
+        val points = mutableListOf(0f to 0f)
+        yrRuns.forEach { r ->
+            cum += r.km
+            points += r.date.dayOfYear.toFloat() to cum.toFloat()
         }
         YearLine(year, cum, points)
     }
-
     val currentYear = today.year
     val currentKm = years.firstOrNull { it.year == currentYear }?.totalKm ?: 0.0
     val best = years.filter { it.year < currentYear }.maxByOrNull { it.totalKm }
-
-    val daysRemaining = ChronoUnit.DAYS
-        .between(today, LocalDate.of(currentYear, 12, 31))
-        .coerceAtLeast(0L)
+    val daysRemaining = ChronoUnit.DAYS.between(today, LocalDate.of(currentYear, 12, 31)).coerceAtLeast(0L)
     val weeksRemaining = daysRemaining / 7.0
     val remainingKm = (best?.totalKm ?: 0.0) - currentKm
     val matched = best != null && remainingKm <= 0
-    val needed =
-        if (best == null || matched || weeksRemaining <= 0) null else remainingKm / weeksRemaining
+    val needed = if (best == null || matched || weeksRemaining <= 0) null else remainingKm / weeksRemaining
 
     val areas = activities.asSequence()
         .filter { it.sport == "run" && !it.locationName.isNullOrBlank() }
@@ -131,13 +172,78 @@ fun computeRunningYearStats(
     )
 }
 
+private fun paceTrend(runs: List<Run>, window: Int = 7): PaceTrend {
+    val paced = runs.filter { it.secPerKm != null }
+    if (paced.size < 2) return PaceTrend(emptyList(), emptyList(), 1f, emptyList(), 0f, 1f)
+
+    val first = paced.first().date
+    fun x(d: LocalDate) = ChronoUnit.DAYS.between(first, d).toFloat()
+
+    val raw = paced.map { x(it.date) to it.secPerKm!!.toFloat() }
+    val rolling = paced.indices.map { i ->
+        val from = maxOf(0, i - (window - 1))
+        val avg = paced.subList(from, i + 1).map { it.secPerKm!! }.average()
+        x(paced[i].date) to avg.toFloat()
+    }
+
+    val last = paced.last().date
+    val paces = paced.map { it.secPerKm!! }
+    // Pad the axis to whole half-minutes around the data for tidy gridlines.
+    val yMin = (Math.floor(paces.minOrNull()!! / 30.0) * 30.0).toFloat()
+    val yMax = (Math.ceil(paces.maxOrNull()!! / 30.0) * 30.0).toFloat()
+    val ticks = (first.year..last.year).mapNotNull { y ->
+        val jan1 = LocalDate.of(y, 1, 1)
+        if (!jan1.isBefore(first)) x(jan1) to y.toString() else null
+    }
+    return PaceTrend(raw, rolling, x(last).coerceAtLeast(1f), ticks, yMin, yMax)
+}
+
+private fun consistency(runs: List<Run>, today: LocalDate, weeksBack: Int = 52): Consistency {
+    val dailyKm = runs.groupBy { it.date }.mapValues { (_, rs) -> rs.sumOf { it.km } }
+
+    val thisMonday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+    val gridStart = thisMonday.minusWeeks((weeksBack - 1).toLong())
+    val weeks = (0 until weeksBack).map { col ->
+        val weekMonday = gridStart.plusWeeks(col.toLong())
+        (0..6).map { d ->
+            val date = weekMonday.plusDays(d.toLong())
+            if (date.isAfter(today)) null else DayCell(date, dailyKm[date] ?: 0.0)
+        }
+    }
+
+    val runWeeks = runs.map { it.date.minusDays((it.date.dayOfWeek.value - 1).toLong()) }.toSortedSet()
+    var longest = 0
+    var streak = 0
+    var prev: LocalDate? = null
+    for (w in runWeeks) {
+        streak = if (prev != null && ChronoUnit.DAYS.between(prev, w) == 7L) streak + 1 else 1
+        longest = maxOf(longest, streak)
+        prev = w
+    }
+    var current = 0
+    var w = if (thisMonday in runWeeks) thisMonday else thisMonday.minusWeeks(1)
+    while (w in runWeeks) { current++; w = w.minusWeeks(1) }
+
+    return Consistency(
+        weeks = weeks,
+        maxDayKm = dailyKm.values.maxOrNull() ?: 1.0,
+        runsLast30 = runs.count { !it.date.isBefore(today.minusDays(30)) },
+        currentStreakWeeks = current,
+        longestStreakWeeks = longest,
+    )
+}
+
 private fun parseDate(iso: String): LocalDate? = runCatching {
     OffsetDateTime.parse(iso).toLocalDate()
 }.getOrElse { runCatching { LocalDate.parse(iso.take(10)) }.getOrNull() }
 
+// ---------------------------------------------------------------------------
+// ViewModel + screen
+// ---------------------------------------------------------------------------
+
 class StatsViewModel : ViewModel() {
     private val repo = FitnessRepository()
-    private val _state = MutableStateFlow<UiState<RunningYearStats>>(UiState.Loading)
+    private val _state = MutableStateFlow<UiState<StatsBundle>>(UiState.Loading)
     val state = _state.asStateFlow()
 
     init { refresh() }
@@ -146,7 +252,7 @@ class StatsViewModel : ViewModel() {
         viewModelScope.launch {
             _state.value = UiState.Loading
             _state.value = try {
-                UiState.Success(computeRunningYearStats(repo.activities()))
+                UiState.Success(computeStats(repo.activities()))
             } catch (e: Exception) {
                 UiState.Error(e.message ?: "Unknown error")
             }
@@ -188,24 +294,28 @@ fun StatsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun StatsContent(data: RunningYearStats) {
+private fun StatsContent(data: StatsBundle) {
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text("Running — year on year", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Cumulative distance by day of year",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        YearOnYear(data.yearly)
+        PaceTrendSection(data.pace)
+        ConsistencySection(data.consistency)
+        if (data.yearly.areas.isNotEmpty()) AreasSection(data.yearly.areas)
+    }
+}
 
+// --- Section: year-on-year cumulative -------------------------------------
+
+@Composable
+private fun YearOnYear(data: RunningYearStats) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Running — year on year", "Cumulative distance by day of year")
         if (data.years.isEmpty()) {
             Text("No running data yet.")
             return@Column
         }
-
-        // Most recent year gets the most prominent colour.
         val palette = listOf(
             MaterialTheme.colorScheme.primary,
             MaterialTheme.colorScheme.tertiary,
@@ -215,54 +325,99 @@ private fun StatsContent(data: RunningYearStats) {
         val colorOf = data.years.sortedByDescending { it.year }
             .mapIndexed { i, y -> y.year to palette[i % palette.size] }
             .toMap()
-
         LineChart(
-            series = data.years.map {
-                LineSeries(it.year.toString(), colorOf[it.year] ?: palette[0], it.points)
-            },
+            series = data.years.map { LineSeries(it.year.toString(), colorOf[it.year] ?: palette[0], it.points) },
             xTicks = listOf(1f to "Jan", 91f to "Apr", 182f to "Jul", 274f to "Oct", 335f to "Dec"),
         )
-
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             data.years.sortedByDescending { it.year }.forEach { y ->
                 val suffix = if (y.year == data.currentYear) " (to date)" else ""
-                LegendRow(
-                    color = colorOf[y.year] ?: palette[0],
-                    label = "${y.year}$suffix",
-                    value = km(y.totalKm),
-                )
+                LegendRow(colorOf[y.year] ?: palette[0], "${y.year}$suffix", km(y.totalKm))
             }
         }
-
-        Spacer(Modifier.height(4.dp))
         TargetCard(data)
-
-        if (data.areas.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text("Where you run", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Runs by neighbourhood",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            AreaList(data.areas)
-        }
     }
 }
 
+// --- Section: pace trend ---------------------------------------------------
+
 @Composable
-private fun AreaList(areas: List<AreaCount>) {
-    val max = (areas.firstOrNull()?.runs ?: 1).coerceAtLeast(1)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun PaceTrendSection(p: PaceTrend) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Pace trend", "Average pace per run, smoothed (lower is faster)")
+        if (p.raw.size < 2) {
+            Text("Not enough runs with a pace yet.")
+            return@Column
+        }
+        LineChart(
+            series = listOf(
+                LineSeries("runs", MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f), p.raw, asPoints = true),
+                LineSeries("trend", MaterialTheme.colorScheme.primary, p.rolling),
+            ),
+            xMax = p.spanDays,
+            xTicks = p.yearTicks,
+            yMin = p.yMin,
+            yMax = p.yMax,
+            yLabel = ::paceLabel,
+        )
+    }
+}
+
+// --- Section: consistency calendar ----------------------------------------
+
+@Composable
+private fun ConsistencySection(c: Consistency) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Consistency", "Runs per day over the last year")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatCard("Runs (30d)", c.runsLast30.toString(), Modifier.weight(1f))
+            StatCard("Streak", "${c.currentStreakWeeks} wk", Modifier.weight(1f))
+            StatCard("Longest", "${c.longestStreakWeeks} wk", Modifier.weight(1f))
+        }
+        val base = MaterialTheme.colorScheme.primary
+        val empty = MaterialTheme.colorScheme.surfaceVariant
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            c.weeks.forEach { week ->
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    week.forEach { cell ->
+                        val color = if (cell == null || cell.km <= 0.0) empty
+                        else base.copy(alpha = intensity(cell.km, c.maxDayKm))
+                        Box(Modifier.size(13.dp).clip(RoundedCornerShape(2.dp)).background(color))
+                    }
+                }
+            }
+        }
+        Text(
+            "Mon at top of each column · darker = further that day",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun intensity(km: Double, max: Double): Float {
+    val r = if (max <= 0) 0.0 else km / max
+    return when {
+        r < 0.25 -> 0.35f
+        r < 0.5 -> 0.55f
+        r < 0.75 -> 0.78f
+        else -> 1f
+    }
+}
+
+// --- Section: areas --------------------------------------------------------
+
+@Composable
+private fun AreasSection(areas: List<AreaCount>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Where you run", "Runs by neighbourhood")
+        val max = (areas.firstOrNull()?.runs ?: 1).coerceAtLeast(1)
         areas.take(12).forEach { a ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    a.area,
-                    Modifier.width(120.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(a.area, Modifier.width(120.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Box(Modifier.weight(1f).height(16.dp).padding(horizontal = 8.dp)) {
                     Box(
                         Modifier
@@ -272,14 +427,19 @@ private fun AreaList(areas: List<AreaCount>) {
                             .background(MaterialTheme.colorScheme.primary),
                     )
                 }
-                Text(
-                    a.runs.toString(),
-                    Modifier.width(28.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    textAlign = TextAlign.End,
-                )
+                Text(a.runs.toString(), Modifier.width(28.dp), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.End)
             }
         }
+    }
+}
+
+// --- Shared pieces ---------------------------------------------------------
+
+@Composable
+private fun SectionTitle(title: String, subtitle: String) {
+    Column {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -330,3 +490,8 @@ private fun TargetCard(d: RunningYearStats) {
 }
 
 private fun km(value: Double): String = String.format(Locale.US, "%,.0f km", value)
+
+private fun paceLabel(secPerKm: Float): String {
+    val t = secPerKm.roundToInt()
+    return String.format(Locale.US, "%d:%02d", t / 60, t % 60)
+}
