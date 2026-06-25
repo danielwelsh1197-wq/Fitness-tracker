@@ -26,6 +26,9 @@ create table activities (
     calories         double precision,
     elevation_gain_m double precision,
     source           text not null default 'strava',
+    location_name    text,                     -- neighbourhood (reverse-geocoded)
+    start_lat        double precision,
+    start_lng        double precision,
     raw              jsonb,
     created_at       timestamptz not null default now()
 );

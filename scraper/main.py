@@ -17,12 +17,20 @@ import traceback
 
 from dotenv import load_dotenv
 
-from scraper import db, garmin_sync
+from scraper import db, garmin_sync, geocode
 
 
 def run_garmin(client) -> bool:
     try:
         rows = garmin_sync.sync()
+        # Refine each run's area to a neighbourhood. Seeding from already-located
+        # rows means only genuinely new areas hit the network; Garmin's own
+        # locationName stays as the fallback if geocoding is unavailable.
+        geocode.seed_cache(db.known_locations(client))
+        for row in rows:
+            area = geocode.neighbourhood(row.get("start_lat"), row.get("start_lng"))
+            if area:
+                row["location_name"] = area
         written = db.upsert_activities(client, rows)
         db.log_sync(client, "garmin", "ok", written)
         print(f"[garmin] upserted {written} activities")

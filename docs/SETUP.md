@@ -88,6 +88,17 @@ like Nike Run Club) come from Strava's free data export instead.
    duplicates). It's already wired into the workflow as `2026-06-17` and in
    `.env.example`; change both if your export ends on a different day.
 
+### 2f. Tag runs with their area (one-time)
+Groups runs by neighbourhood in the app's Stats screen. Garmin tags new runs
+automatically; this backfills the historical (Strava) ones from their GPS files.
+```bash
+pip install fitparse
+python tools/backfill_locations.py "~/Downloads/Strava export 16-6-26"
+```
+It reads each run's start point from the export's `.fit.gz`/`.gpx` files,
+reverse-geocodes it (OpenStreetMap, ~a minute), and prints your top areas. Re-run
+with `--all` to re-tag everything (e.g. after changing the geocoding).
+
 ---
 
 ## 3. GitHub Actions (scheduled scraping)
